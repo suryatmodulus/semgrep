@@ -12,4 +12,3 @@ tox = "*"
 
 [packages]
 semgrep = {editable = true,path = "."}
-peewee = "*"
