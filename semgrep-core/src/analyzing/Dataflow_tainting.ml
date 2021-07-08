@@ -133,9 +133,7 @@ let rec check_tainted_expr ~in_a_sink config fun_env env exp =
   (not (config.is_sanitizer (G.E exp.eorig)))
   &&
   let x = config.is_source (G.E exp.eorig) || go_into exp.e in
-  if x && its_sink then (
-    prerr_endline "report";
-    config.found_tainted_sink (G.E exp.eorig) env );
+  if x && its_sink then config.found_tainted_sink (G.E exp.eorig) env;
   x
 
 (* Test whether an instruction is tainted, and if it is also a sink,
