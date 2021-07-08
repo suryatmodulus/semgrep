@@ -158,6 +158,15 @@ let check_tainted_instr config fun_env env instr =
   if x && its_sink then config.found_tainted_sink (G.E instr.iorig) env;
   x
 
+let check_tainted_return config fun_env env tok e =
+  let orig_return = G.s (G.Return (tok, Some e.eorig, tok)) in
+  let its_sink = config.is_sink (G.S orig_return) in
+  let is_tainted =
+    check_tainted_expr ~in_a_sink:its_sink config fun_env env e
+  in
+  if is_tainted && its_sink then config.found_tainted_sink (G.S orig_return) env;
+  is_tainted
+
 (*****************************************************************************)
 (* Transfer *)
 (*****************************************************************************)
@@ -193,10 +202,7 @@ let (transfer :
         if check_tainted_instr config fun_env in' x then IL.lvar_of_instr_opt x
         else None
     (* if just a single return is tainted then the function is tainted *)
-    | NReturn (tok, e)
-      when check_tainted_expr
-             ~in_a_sink:(config.is_sink (G.Tk tok))
-             config fun_env in' e ->
+    | NReturn (tok, e) when check_tainted_return config fun_env in' tok e ->
         ( match opt_name with
         | Some var -> Hashtbl.add fun_env (str_of_name var) ()
         | None -> () );
