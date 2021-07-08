@@ -17,6 +17,7 @@
 (*e: pad/r2c copyright *)
 open Common
 open IL
+module G = AST_generic
 module F = IL
 module D = Dataflow
 module VarMap = Dataflow.VarMap
@@ -46,10 +47,10 @@ type fun_env = (Dataflow.var, unit) Hashtbl.t
 
 (*s: type [[Dataflow_tainting.config]] *)
 type config = {
-  is_source : AST_generic.any -> bool;
-  is_sink : AST_generic.any -> bool;
-  is_sanitizer : AST_generic.any -> bool;
-  found_tainted_sink : AST_generic.any -> unit Dataflow.env -> unit;
+  is_source : G.any -> bool;
+  is_sink : G.any -> bool;
+  is_sanitizer : G.any -> bool;
+  found_tainted_sink : G.any -> unit Dataflow.env -> unit;
 }
 (** This can use semgrep patterns under the hood. Note that a source can be an
   * instruction but also an expression. *)
@@ -95,12 +96,17 @@ let sanitized_instr config instr =
       true
   | ___else___ -> config.is_sanitizer (G.E instr.iorig)
 
-let rec tainted config fun_env env exp =
+(* Test whether an expression is tainted, and if it is also a sink,
+ * report the finding too (by side effect). *)
+let rec check_tainted_expr ~in_a_sink config fun_env env exp =
+  let its_sink = (not in_a_sink) && config.is_sink (G.E exp.eorig) in
   (* We call `tainted` recursively on each subexpression, so each subexpression
    * is checked against `pattern-sources`. For example, if `location.href` were
    * a source, this would infer that `"aa" + location.href + "bb"` is tainted.
    * Also note that any arbitrary expression can be source! *)
-  let is_tainted = tainted config fun_env env in
+  let is_tainted =
+    check_tainted_expr ~in_a_sink:(in_a_sink || its_sink) config fun_env env
+  in
   let go_base = function
     | Var var ->
         VarMap.mem (str_of_name var) env
@@ -127,12 +133,16 @@ let rec tainted config fun_env env exp =
   (not (config.is_sanitizer (G.E exp.eorig)))
   &&
   let x = config.is_source (G.E exp.eorig) || go_into exp.e in
-  if x && config.is_sink (G.E exp.eorig) then
-    config.found_tainted_sink (G.E exp.eorig) env;
+  if x && its_sink then (
+    prerr_endline "report";
+    config.found_tainted_sink (G.E exp.eorig) env );
   x
 
-let tainted_instr config fun_env env instr =
-  let is_tainted = tainted config fun_env env in
+(* Test whether an instruction is tainted, and if it is also a sink,
+ * report the finding too (by side effect). *)
+let check_tainted_instr config fun_env env instr =
+  let its_sink = config.is_sink (G.E instr.iorig) in
+  let is_tainted = check_tainted_expr ~in_a_sink:its_sink config fun_env env in
   let tainted_args = function
     | Assign (_, e) -> is_tainted e
     | AssignAnon _ -> false (* TODO *)
@@ -145,8 +155,7 @@ let tainted_instr config fun_env env instr =
   (not (sanitized_instr config instr))
   &&
   let x = config.is_source (G.E instr.iorig) || tainted_args instr.i in
-  if x && config.is_sink (G.E instr.iorig) then
-    config.found_tainted_sink (G.E instr.iorig) env;
+  if x && its_sink then config.found_tainted_sink (G.E instr.iorig) env;
   x
 
 (*****************************************************************************)
@@ -181,10 +190,13 @@ let (transfer :
   let gen_ni_opt =
     match node.F.n with
     | NInstr x ->
-        if tainted_instr config fun_env in' x then IL.lvar_of_instr_opt x
+        if check_tainted_instr config fun_env in' x then IL.lvar_of_instr_opt x
         else None
     (* if just a single return is tainted then the function is tainted *)
-    | NReturn (_, e) when tainted config fun_env in' e ->
+    | NReturn (tok, e)
+      when check_tainted_expr
+             ~in_a_sink:(config.is_sink (G.Tk tok))
+             config fun_env in' e ->
         ( match opt_name with
         | Some var -> Hashtbl.add fun_env (str_of_name var) ()
         | None -> () );
@@ -202,7 +214,7 @@ let (transfer :
      *)
     match node.F.n with
     | NInstr x ->
-        if tainted_instr config fun_env in' x then None
+        if check_tainted_instr config fun_env in' x then None
         else
           (* all clean arguments should reset the taint *)
           IL.lvar_of_instr_opt x
