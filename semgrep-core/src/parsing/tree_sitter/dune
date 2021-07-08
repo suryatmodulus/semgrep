@@ -21,10 +21,11 @@
    tree-sitter-lang.hack
    tree-sitter-lang.html
    tree-sitter-lang.vue
+   tree-sitter-lang.bash
 
    commons
    pfff-lang_GENERIC
-
+   semgrep_parsing_ast
  )
  (preprocess (pps ppx_profiling ppx_sexp_conv ppx_deriving.show))
 )
